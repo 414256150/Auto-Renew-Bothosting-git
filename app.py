@@ -108,7 +108,7 @@ def format_notification(status: str, extra: str = "", error: str = "", expiry_da
         masked_email = EMAIL[:2] + '****' 
     
     lines = [
-        "🇫🇮 Bot-hosting-git 续期通知",
+        "🇫🇮 Bot-hosting-git 续期通知（每4天续期）",
         "",
         f"{status}",
         f"👤 登录账户: {masked_email}",
@@ -344,7 +344,7 @@ def do_discord_login(sb) -> bool:
 # 主流程
 def main():
     print("#" * 25)
-    print("   Bot-hosting-git 自动续期")
+    print("   Bot-hosting-git 自动续期（每4天续期）")
     print("#" * 25)
 
     IS_PROXY = os.environ.get("IS_PROXY", "false").lower() == "true"
