@@ -42,7 +42,7 @@ def format_notification(status: str, extra: str = "", error: str = "", expiry_da
         masked_email = EMAIL[:2] + '****' 
     
     lines = [
-        "🇫🇮 Bot-hosting 续期通知",
+        "🇫🇮 Bot-hosting-git续期通知",
         "",
         f"{status}",
         f"👤 登录账户: {masked_email}",
