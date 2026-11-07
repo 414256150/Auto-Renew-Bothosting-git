@@ -339,7 +339,7 @@ def get_expiry_from_dom(sb) -> str:
 # 主流程
 def main():
     print("#" * 25)
-    print("   Bot-hosting 自动续期")
+    print("   Bot-hosting-git 自动续期")
     print("#" * 25)
 
     IS_PROXY = os.environ.get("IS_PROXY", "false").lower() == "true"
