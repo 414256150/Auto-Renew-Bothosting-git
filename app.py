@@ -4,14 +4,11 @@
 import os, re, sys, time, random, requests, subprocess,ctypes
 from seleniumbase import SB
 
-# from notify import send_notification, load_smtp_config  # 通知渠道沿用 2Bdou/bothosting（TG + SMTP，可并存）
-
 # 环境变量配置(可以直接私库在双引号里填写)
 EMAIL         = os.environ.get("EMAIL") or ""           # 邮箱必填，登录和通知使用
 PASSWORD      = os.environ.get("PASSWORD") or ""        # 主用密码登录方式, 失败时才使用,必须填写
-# 通知：见 notify.py（与 dnshe-renewal 对齐；可用 TG_BOT_TOKEN/TG_CHAT_ID 或 TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID）
-#   Telegram: TG_BOT_TOKEN + TG_CHAT_ID（或 TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID）
-#   邮件:     SMTP_CONFIG（JSON）
+TG_CHAT_ID    = os.environ.get("TG_CHAT_ID") or ""      # TG chat id,不填写不通知，需和bot token一起填写生效
+TG_BOT_TOKEN  = os.environ.get("TG_BOT_TOKEN") or ""    # TG bot token 
 
 BASE_URL = "https://bot-hosting.net"
 
@@ -19,49 +16,36 @@ if not (EMAIL and PASSWORD):
     print("ℹ️ 未配置 EMAIL 和 PASSWORD,脚本终止。")
     sys.exit(1)
 
-NOTIFY_TITLE = "Bot-hosting 续期通知"
-
-
-def _account_label() -> str:
-    raw = (EMAIL or "").strip()
-    if "@" not in raw:
-        try:
-            cfg = load_smtp_config()
-            if cfg and cfg.get("to"):
-                raw = str(cfg["to"]).split(",")[0].strip()
-        except Exception:
-            pass
-    if "@" in raw:
-        name, domain = raw.split("@", 1)
-        if len(name) > 4:
-            return f"{name[:2]}****{name[-2:]}@{domain}"
-        return f"{name}@{domain}"
-    if raw:
-        return raw[:2] + "****"
-    return "（未配置 EMAIL）"
-
-
-def send_telegram_message(message: str) -> bool:
-    """推送通知（TG + SMTP，失败不阻断主流程）；沿用 2Bdou/bothosting 的 notify 模块。"""
+# 发送tg通知
+def send_telegram_message(message: str):
+    if not TG_BOT_TOKEN or not TG_CHAT_ID:
+        print("⚠️ Telegram 未配置，跳过通知")
+        return
+    url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
     try:
-        return send_notification(message, title=NOTIFY_TITLE)
+        requests.post(url, json={"chat_id": TG_CHAT_ID, "text": message}, timeout=10)
+        print("✅ Telegram 通知已发送")
     except Exception as e:
-        print(f"通知调用异常: {e}")
-        print(f"::warning::通知调用异常: {e}")
-        return False
+        print(f"❌ Telegram 发送失败: {e}")
 
 # 通知格式
 def format_notification(status: str, extra: str = "", error: str = "", expiry_date: str = "") -> str:
     local_time = time.gmtime(time.time() + 8 * 3600)
     now = time.strftime("%Y-%m-%d %H:%M:%S", local_time)
-    masked_email = _account_label()
-
+    if '@' in EMAIL:
+        name, domain = EMAIL.split('@', 1)
+        if len(name) > 4:
+            masked_email = f"{name[:2]}****{name[-2:]}@{domain}"
+        else:
+            masked_email = f"{name}@{domain}"
+    else:
+        masked_email = EMAIL[:2] + '****' 
+    
     lines = [
         "🇫🇮 Bot-hosting 续期通知",
         "",
         f"{status}",
         f"👤 登录账户: {masked_email}",
-        "🔐 登录方式: Email/Password",
     ]
     if expiry_date:
         lines.append(f"📅 到期时间: {expiry_date}")
@@ -326,19 +310,22 @@ def normalize_date(date_str: str) -> str:
             return f"{parts[0]}/{int(parts[1]):02d}/{int(parts[2]):02d}"
     return date_str
 
-# 兼容三种日期格式: 12 Nov 2026 / 10/24/2026 / 2026-11-12
-DATE_RE = r"(\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}|\d{1,2}/\d{1,2}/\d{4}|\d{4}-\d{2}-\d{2})"
+DATE_RE = r"(\d{4}/\d{1,2}/\d{1,2}|\d{1,2}/\d{1,2}/\d{4})"
 
 # 获取过期日期
+DATE_RE = r"(\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}|\d{1,2}/\d{1,2}/\d{4}|\d{4}-\d{2}-\d{2})"
 def extract_expiry_date(page_source: str) -> str:
     patterns = [
-        r"[Ee]xpires\s*[:\-]?\s*" + DATE_RE,   # Expires 10/24/2026. Renew manually to extend it for 4 days.
-        DATE_RE,                                # 兜底: 账单页纯文本中通常只有到期日期
+        r"[Ee]xpires\s*[:\-]?\s*" + DATE_RE,   # 优先匹配包含 "Expires" 的
+        DATE_RE,                                # 兜底匹配
     ]
+    
     for pattern in patterns:
         match = re.search(pattern, page_source)
         if match:
+            # match.group(1) 现在能准确拿到完整的日期字符串
             return normalize_date(match.group(1))
+            
     return None
 
 # 优先从 DOM 的 st-meta 元素提取到期日期 (不依赖页面语言)
