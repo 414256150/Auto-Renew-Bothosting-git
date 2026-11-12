@@ -300,22 +300,43 @@ def format_countdown(countdown_str: str) -> str:
     except:
         return countdown_str
 
-# 归一化日期为 YYYY/MM/DD
+# 归一化日期为 YYYY/MM/DD（支持中文、英文、日/月/年、月/日/年）
+_MONTHS = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+           "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12}
+
 def normalize_date(date_str: str) -> str:
-    parts = date_str.split('/')
+    s = date_str.strip()
+    m = re.match(r"(\d{4})年(\d{1,2})月(\d{1,2})日", s)   # 2026年11月14日
+    if m:
+        return f"{m.group(1)}/{int(m.group(2)):02d}/{int(m.group(3)):02d}"
+    m = re.match(r"([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})", s)   # November 14, 2026
+    if m and m.group(1).lower()[:3] in _MONTHS:
+        return f"{m.group(3)}/{_MONTHS[m.group(1).lower()[:3]]:02d}/{int(m.group(2)):02d}"
+    m = re.match(r"(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{4})", s)   # 14 November 2026
+    if m and m.group(2).lower()[:3] in _MONTHS:
+        return f"{m.group(3)}/{_MONTHS[m.group(2).lower()[:3]]:02d}/{int(m.group(1)):02d}"
+    parts = s.split('/')
     if len(parts) == 3:
         if len(parts[2]) == 4:   # MM/DD/YYYY
             return f"{parts[2]}/{int(parts[0]):02d}/{int(parts[1]):02d}"
         if len(parts[0]) == 4:   # YYYY/MM/DD
             return f"{parts[0]}/{int(parts[1]):02d}/{int(parts[2]):02d}"
-    return date_str
+    return s
 
-DATE_RE = r"(\d{4}/\d{1,2}/\d{1,2}|\d{1,2}/\d{1,2}/\d{4})"
+# 注意: DATE_RE 只定义一次,覆盖中文、英文(月前/日前)、斜杠、横杠六种格式
+_MONTH_RE = r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+DATE_RE = (
+    r"(\d{4}年\d{1,2}月\d{1,2}日"
+    r"|" + _MONTH_RE + r"\s+\d{1,2},?\s+\d{4}"
+    r"|\d{1,2}\s+" + _MONTH_RE + r"\s+\d{4}"
+    r"|\d{4}/\d{1,2}/\d{1,2}|\d{1,2}/\d{1,2}/\d{4}|\d{4}-\d{2}-\d{2})"
+)
 
 # 获取过期日期
-DATE_RE = r"(\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}|\d{1,2}/\d{1,2}/\d{4}|\d{4}-\d{2}-\d{2})"
 def extract_expiry_date(page_source: str) -> str:
     patterns = [
+        DATE_RE + r"\s*到期",                   # "2026年11月14日 到期"
+        r"到期[^0-9A-Za-z]{0,10}" + DATE_RE,     # "到期时间:2026年11月14日"
         r"[Ee]xpires\s*[:\-]?\s*" + DATE_RE,   # 优先匹配包含 "Expires" 的
         DATE_RE,                                # 兜底匹配
     ]
@@ -417,7 +438,7 @@ def main():
 
         if not login_ok:
             send_telegram_message(format_notification("❌ 登录失败", error="Password 登录失败"))
-            return
+            sys.exit(1)
 
         # 提取当前到期日期
         sb.sleep(3)
@@ -444,13 +465,13 @@ def main():
             try:
                 if sb.is_element_visible(selector):
                     button_text = sb.get_text(selector)
-                    # "Renew in HH:MM:SS" / "Renewal cooldown HH:MM:SS" 都表示冷却中, 时间为距可续期的剩余时长
-                    match = re.search(r"(?:Renew in|Renewal cooldown)\s+(\d{1,2}:\d{2}:\d{2})", button_text, re.I)
+                    # "Renew in HH:MM:SS" / "Renewal cooldown HH:MM:SS" / "续期冷却 HH:MM:SS" 都表示冷却中, 时间为距可续期的剩余时长
+                    match = re.search(r"(?:Renew in|Renewal cooldown|续期冷却)\s*(\d{1,2}:\d{2}:\d{2})", button_text, re.I)
                     if match:
                         countdown_text = match.group(1)
                         print(f"⏳ 续期冷却中, 未到续期时间: '{button_text}'")
                         break
-                    elif "Renew" in button_text:
+                    elif "Renew" in button_text or "续期" in button_text:
                         outer_renew_selector = selector
                         print(f"✅ 续期按钮可用: '{button_text}'")
                         break
@@ -467,7 +488,7 @@ def main():
             except Exception as e:
                 print(f"❌ 点击外部按钮失败: {e}")
                 send_telegram_message(format_notification("❌ 续期失败", error="点击外部续期按钮出错"))
-                return
+                sys.exit(1)
 
             # 处理弹窗中的 Turnstile
             turnstile_passed = True  # 未检测到 Turnstile 时视为无需验证
@@ -488,7 +509,7 @@ def main():
             if not turnstile_passed:
                 print("❌ Turnstile 验证最终未通过，脚本退出")
                 send_telegram_message(format_notification("❌ 续期失败", error="Turnstile 验证未通过"))
-                return
+                sys.exit(1)
 
             # 点击续期按钮
             print("⏳ 等待续期按钮可用并点击...")
@@ -512,7 +533,7 @@ def main():
             except Exception:
                 new_page_text = sb.get_page_source()
             new_expiry = get_expiry_from_dom(sb) or extract_expiry_date(new_page_text)
-            new_match = re.search(r"(?:Renewal cooldown|Renew in)\s+(\d{1,2}:\d{2}:\d{2})", new_page_text)
+            new_match = re.search(r"(?:Renewal cooldown|Renew in|续期冷却)\s*(\d{1,2}:\d{2}:\d{2})", new_page_text)
             if new_match:
                 new_countdown = new_match.group(1)
                 print(f"✅ 续期成功！新的倒计时: {new_countdown}")
@@ -544,6 +565,7 @@ def main():
                             expiry_date=current_expiry or "（未获取到）"
                         )
                     )
+                    sys.exit(1)
 
         else:
             if countdown_text:
@@ -560,11 +582,12 @@ def main():
                 print("ℹ️ 未找到续期按钮或倒计时，状态未知")
                 send_telegram_message(
                     format_notification(
-                        "ℹ️ 无需续期",
+                        "ℹ️ 状态未知",
                         extra="当前状态未知，请手动检查",
                         expiry_date=current_expiry or "（未获取到）"
                     )
                 )
+                sys.exit(1)
 
         print("🏁 脚本执行完毕")
 
