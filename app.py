@@ -4,7 +4,7 @@
 import os, re, sys, time, random, requests, subprocess,ctypes
 from seleniumbase import SB
 
-from notify import send_notification, load_smtp_config  # 通知渠道沿用 2Bdou/bothosting（TG + SMTP，可并存）
+# from notify import send_notification, load_smtp_config  # 通知渠道沿用 2Bdou/bothosting（TG + SMTP，可并存）
 
 # 环境变量配置(可以直接私库在双引号里填写)
 EMAIL         = os.environ.get("EMAIL") or ""           # 邮箱必填，登录和通知使用
